@@ -1,4 +1,5 @@
-################################ Libraries ##############################
+#Loading necessary libraries
+#If libraries not installed already, run: install.packages("library name")
 library(caTools)
 library(tidyverse)
 library(MASS)
@@ -11,20 +12,28 @@ library(glmulti)
 library(sandwich)
 library(lmtest)
 library(glmmTMB)
-library(performance)
+library("performance")
 library(corrplot)
+##############################################################################################################
 
-##################################### Dataset ############################
+# Data cleaning
+# Make sure that the files are in the current directory
 
+# Read csv file containing the sites for model validation
 validation <- read_csv("Validation_1.csv")
+
+# Read csv file containing field data
 df <- read_csv("Dataset_257_vphl1.csv")
 
-df1 <- filter(df, Type == "Intersection", `Lane configuration` == "Exclusive")
-#df1 <- filter(df, `Lane configuration` == "Exclusive")
+# Data for model development (exclusive lane)
+df1 <- filter(df, `Lane configuration` == "Exclusive")
 df1 <- filter(df1, !(Location %in% validation$Location))
-sites <- df1 %>% group_by(Name, Location) %>% summarise(n= n())
+
+# Converting 5 mins counts to vphl
 df1[c(8:22, 24:25)] <- lapply(df1[c(8:22, 24:25)], function (x) {x*12})
 df1$`Red duration` <- df1$`Red duration`/300
+
+#Adding additional columns for data availability
 df1$`Total conflicting thru volume` <- df1$`Conflicting thru volume during red` + 
   df1$`Conflicting thru volume during green`
 df1$`Total opposing left-turn volume` <- df1$`Opposing left volume during red` + 
@@ -36,9 +45,8 @@ df1$`Total pedestrian volume (Parallel)` <- df1$`Parallel ped volume during red`
 df1$`Total pedestrian volume (Conflicting)` <-  df1$`Conflicting ped volume during red` + 
   df1$`Conflicting ped volume during green`
 
-
-########################### Correlation matrix ############################
-
+# Correlation matrix of quantitative variables
+# Outputs an image in the same directory
 a <- df1[,c(8,6, 9:23, 87:91)]
 a <- as.data.frame(a)
 a <- filter(a, is.na(`Red duration`) == FALSE)
@@ -59,53 +67,55 @@ corrplot(cor(a),  tl.cex = 1.3, type = "upper",
 
 dev.off()
 
-########################## Descriptive statistics #########################
-
+# Descriptive statistics of categorical variables
+# Outputs html file with table
 a <- df1[,c(8,6, 9:23, 87:91)]
 a <- as.data.frame(a)
 library(stargazer)
 stargazer(a, type = "html", digits=1, out="table3.htm")
 
-#################################  Modeling dataset ########################################
-
-names(df1)
+# datasets to be used for modeling
 c <- df1[c(3, 8, 6, 9:23, 87:91, 36,37,40,41,78,79,81,83:86,4)]
-#c <- filter(c, is.na(`Red duration`) == FALSE)
 c$`Subject Approach speed limit` <- as.numeric(c$`Subject Approach speed limit`)
 c$`Crossing Approach Speed Limit` <-  as.numeric(c$`Crossing Approach Speed Limit`)
 c$`Subject Approach speed limit` <- ifelse(is.na(c$`Subject Approach speed limit`) == TRUE, 35, c$`Subject Approach speed limit`)
 c$`Crossing Approach Speed Limit` <- ifelse(is.na(c$`Crossing Approach Speed Limit`) == TRUE, 35, c$`Crossing Approach Speed Limit`)
 
-names(c)
+# Dataset for all models except mixed effect and logistic models
 d <- c[c(2:9, 17, 19:34)]
 names(d) <- make.names(names(d), unique=TRUE)
-dfe_exclusive <- d
+dfe <- d
+
+# Dataset for logistic regression
 d <- c[c(18, 3:9, 17, 19:34)] # For logistic only
 names(d) <- make.names(names(d), unique=TRUE)
 dfe_logistic <- d
+
+# Dataset for mixed effect model
 d <- c[c(35,2:9, 17, 19:34)] # For mixed only
 names(d) <- make.names(names(d), unique=TRUE)
 dfe_mixed <- d
 
-################################### Exclusive ##########################################################
+###################################### Poisson regression #######################################
 
-dfe <- dfe_exclusive
-
-########### Poisson ###############
+# Model form 1
 mp_e1 <- glm(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Conflicting.thru.volume.during.red  +
-               Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
-               Presence.of.parallel.pedestrian.crosswalk   +
-               Receiving.lane + Shadowed.left, family = poisson, data = dfe)
+              Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
+              Presence.of.parallel.pedestrian.crosswalk   +
+              Receiving.lane + Shadowed.left, family = poisson, data = dfe)
 summary(mp_e1)
 
+# Model form 2
 mp_e2 <- glm(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Total.conflicting.thru.volume + 
                Total.opposing.left.turn.volume +
                Total.shadowed.left.turn.volume+ Total.right.turn.volume + Total.pedestrian.volume..Conflicting., family = poisson, data = dfe)
 summary(mp_e2)
 
+# Model form 3
 mp_e3 <- glm(formula = Right.turn.on.red.volume ~ 1 + Total.right.turn.volume, family = poisson, data = dfe)
 summary(mp_e3)
 
+# Outputs the model results in a table
 stargazer(mp_e1,mp_e2,mp_e3,
           single.row = TRUE, 
           type ="html", 
@@ -117,12 +127,12 @@ stargazer(mp_e1,mp_e2,mp_e3,
           intercept.bottom = FALSE,
           out="models.htm"
 )
-########## Overdispersion ###############
 
+# Checks for overdispersion
 mp_e <- mp_e1
 mp_e$deviance/mp_e$df.residual
 
-##Residual Plot
+#Residual Plot
 mu.hat <- mp_e$fitted.values
 stand.resid <- rstandard(model = mp_e, type = "pearson")  
 
@@ -135,11 +145,11 @@ abline(h = c(-3,-2,0,2,3), lty = "dotted", col = "red")
 
 dev.off()
 
-##Goodness of fit test-Small p-value means bad fit
 pchisq(mp_e$deviance, df=mp_e$df.residual, lower.tail=FALSE)
 
 # There is evidence of overdispersion
 
+# Excess zeros
 tiff("test.tiff", units="in", width=16, height=13, res=300)
 
 ggplot(c, aes(Right.turn.on.red.volume)) + geom_histogram(binwidth = 1) +
@@ -150,145 +160,106 @@ ggplot(c, aes(Right.turn.on.red.volume)) + geom_histogram(binwidth = 1) +
   theme(axis.text.x = element_text(size = rel(5)))+    ##Change size of tick text in y-axis label
   theme(axis.text.y = element_text(size = rel(5)))
 dev.off()
+
 ################### Negative binomial ##################################
 
+# Model form 1
 mnb_e1 <- glm.nb(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Conflicting.thru.volume.during.red  +
-                   Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
-                   Presence.of.parallel.pedestrian.crosswalk   +
-                   Receiving.lane + Shadowed.left, data = dfe)
+                  Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
+                  Presence.of.parallel.pedestrian.crosswalk   +
+                  Receiving.lane + Shadowed.left, data = dfe)
 
 summary(mnb_e1)
 
+# Model form 2
 mnb_e2 <- glm.nb(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Total.conflicting.thru.volume + 
                    Total.opposing.left.turn.volume +
                    Total.shadowed.left.turn.volume+ Total.right.turn.volume + Total.pedestrian.volume..Conflicting., data = dfe)
 
 summary(mnb_e2)
 
+# Model form 3
 mnb_e3 <- glm.nb(formula = Right.turn.on.red.volume ~ 1 + Total.right.turn.volume, data = dfe)
 
 summary(mnb_e3)
 
-stargazer(mnb_e1,mnb_e2,mnb_e3,
-          single.row = TRUE, 
-          type ="html", 
-          report = "vc*", 
-          header = FALSE, 
-          df=FALSE, 
-          digits=2, 
-          se = NULL,
-          intercept.bottom = FALSE,
-          out="models.htm"
-)
-#################### QuasiPoisson ################
+################################## QuasiPoisson #####################################
 
+# Model form 1
 mqp_e1 <- glm(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Conflicting.thru.volume.during.red  +
-                Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
-                Presence.of.parallel.pedestrian.crosswalk   +
-                Receiving.lane + Shadowed.left, family = quasipoisson, data = dfe)
+               Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
+               Presence.of.parallel.pedestrian.crosswalk   +
+               Receiving.lane + Shadowed.left, family = quasipoisson, data = dfe)
 
 summary(mqp_e1)
 
-
+# Model form 2
 mqp_e2 <- glm(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Total.conflicting.thru.volume + 
                 Total.opposing.left.turn.volume +
                 Total.shadowed.left.turn.volume+ Total.right.turn.volume + Total.pedestrian.volume..Conflicting., family = quasipoisson, data = dfe)
 
 summary(mqp_e2)
 
+# Model form 3
 mqp_e3 <- glm(formula = Right.turn.on.red.volume ~ 1 + Total.right.turn.volume, family = quasipoisson, data = dfe)
 
 summary(mqp_e3)
-
-stargazer(mqp_e1,mqp_e2,mqp_e3,
-          single.row = TRUE, 
-          type ="html", 
-          report = "vc*", 
-          header = FALSE, 
-          df=FALSE, 
-          digits=2, 
-          se = NULL,
-          intercept.bottom = FALSE,
-          out="models.htm"
-)
 
 check_overdispersion(mp_e)
 check_zeroinflation(mznb_e)
 compare_performance(mp_e, mnb_e, mh_e, mznb_e, rank = TRUE)
 check_collinearity(mnb_e)
 
-################## Hurdle model ################
+##################################### Hurdle model ######################################
 
+# Model form 1
 mh_e1 <- hurdle(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Conflicting.thru.volume.during.red  +
-                  Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
-                  Presence.of.parallel.pedestrian.crosswalk   +
-                  Receiving.lane + Shadowed.left| Red.duration + Total.right.turn.volume, data = dfe, dist = "negbin")
+                 Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
+                 Presence.of.parallel.pedestrian.crosswalk   +
+                 Receiving.lane + Shadowed.left| Red.duration + Total.right.turn.volume, data = dfe, dist = "negbin")
 summary(mh_e1)
 
+# Model form 2
 mh_e2 <- hurdle(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Total.conflicting.thru.volume + 
                   Total.opposing.left.turn.volume +
                   Total.shadowed.left.turn.volume+ Total.right.turn.volume + 
                   Total.pedestrian.volume..Conflicting.| Red.duration + Total.right.turn.volume, data = dfe, dist = "negbin")
 summary(mh_e2)
 
+# Model form 3
 mh_e3 <- hurdle(formula = Right.turn.on.red.volume ~ 1 +
                   Total.right.turn.volume| Total.right.turn.volume, data = dfe, dist = "negbin")
 summary(mh_e3)
 
-stargazer(mh_e3,
-          single.row = TRUE, 
-          type ="html", 
-          report = "vc*", 
-          header = FALSE, 
-          df=FALSE, 
-          digits=2, 
-          se = NULL,
-          intercept.bottom = FALSE,
-          out="models.htm"
-)
+######################### Zero-inflated negative binomial model #######################
 
-################## Zero-inflated negative binomial model ################
-
+# Model form 1
 mznb_e1<- zeroinfl(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Conflicting.thru.volume.during.red  +
-                     Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
-                     Presence.of.parallel.pedestrian.crosswalk   +
-                     Receiving.lane + Shadowed.left| Red.duration + Total.right.turn.volume, data = dfe, dist = "negbin")
+                    Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
+                    Presence.of.parallel.pedestrian.crosswalk   +
+                    Receiving.lane + Shadowed.left| Red.duration + Total.right.turn.volume, data = dfe, dist = "negbin")
 summary(mznb_e1)
 
-
+# Model form 2
 mznb_e2<- zeroinfl(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Total.conflicting.thru.volume + 
                      Total.opposing.left.turn.volume +
                      Total.shadowed.left.turn.volume+ Total.right.turn.volume + 
                      Total.pedestrian.volume..Conflicting.| Red.duration + Total.right.turn.volume, data = dfe, dist = "negbin")
 summary(mznb_e2)
 
+# Model form 3
 mznb_e3<- zeroinfl(formula = Right.turn.on.red.volume ~ 1 +
                      Total.right.turn.volume| Total.right.turn.volume, data = dfe, dist = "negbin")
 summary(mznb_e3)
 
-
-stargazer(mznb_e3,
-          single.row = TRUE, 
-          type ="html", 
-          report = "vc*", 
-          header = FALSE, 
-          df=FALSE, 
-          digits=2, 
-          se = NULL,
-          intercept.bottom = FALSE,
-          out="models.htm"
-)
-
-
+# Vuong test for excess zeros
 vuong(mnb_e, mznb_e) 
 
-###################### Mixed-effect model #####################
-
-#dfe_mixed <- d
+################################# Mixed-effect model ########################################
 
 dfe_mixed$State <- str_to_title(dfe_mixed$State)
-state <- dfe_mixed %>% group_by(State) %>% tally()
 
+# Model form 1
 mm_e1 <- glmer.nb(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Conflicting.thru.volume.during.red  +
                     Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
                     Presence.of.parallel.pedestrian.crosswalk   +
@@ -298,40 +269,41 @@ mm_e1 <- glmer.nb(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Confli
 
 summary(mm_e1)
 
+# Model form 2
 mm_e2 <- glmer.nb(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Total.conflicting.thru.volume + 
                     Total.opposing.left.turn.volume +
                     Total.shadowed.left.turn.volume+ Total.right.turn.volume + 
                     Total.pedestrian.volume..Conflicting. +
-                    (1|State), data=dfe_mixed)
+                   (1|State), data=dfe_mixed)
 
 
 summary(mm_e2)
 
+# Model form 3
 mm_e3 <- glmer.nb(formula = Right.turn.on.red.volume ~ 1 + Total.right.turn.volume +
                     (1|State), data=dfe_mixed)
 
 
 summary(mm_e3)
 
+
+# Random effect plot
 plot_model(mm_e3, type = "re") +theme_sjplot2(base_size = 30, base_family = "")
 
-pchisq(2*(logLik(mm_e)-logLik(mnb_e)),
-       df=1,lower.tail=FALSE)/2
+##################################### Logistic regression ########################################
 
-anova(mm_e, mnb)
-
-
-################# Logistic regression ######################
 dfe_logistic$Right.turn.on.red.percent <- dfe_logistic$Right.turn.on.red.percent/100
 
+# Model form 1
 ml_e1 <- glm(Right.turn.on.red.percent ~ 1 + Red.duration + Conflicting.thru.volume.during.red  +
                Shadowed.left.volume.during.red + Conflicting.ped.volume.during.red +
                Presence.of.parallel.pedestrian.crosswalk   +
                Receiving.lane + Shadowed.left,family = binomial, weights = Total.right.turn.volume,
-             data = dfe_logistic)
+            data = dfe_logistic)
 
 summary(ml_e1)
 
+# Model form 2
 ml_e2 <- glm(Right.turn.on.red.percent ~ 1 + Red.duration + Total.conflicting.thru.volume + 
                Total.opposing.left.turn.volume +
                Total.shadowed.left.turn.volume+ 
@@ -340,30 +312,22 @@ ml_e2 <- glm(Right.turn.on.red.percent ~ 1 + Red.duration + Total.conflicting.th
 
 summary(ml_e2)
 
+# Model form 3
 ml_e3 <- glm(Right.turn.on.red.percent ~ 1 + Red.duration, family = binomial, weights = Total.right.turn.volume,
              data = dfe_logistic)
 
 summary(ml_e3)
 
-stargazer(ml_e1, ml_e2, ml_e3,
-          single.row = TRUE, 
-          type ="html", 
-          report = "vc*", 
-          header = FALSE, 
-          df=FALSE, 
-          digits=2, 
-          se = NULL,
-          intercept.bottom = FALSE,
-          out="models.htm"
-)
+######################### Separate model for Interchange/not? #################################################
 
-
-############################################### Interchange #################################################
+# Analysis using data for interchanges only
+# Same steps for data preparation as before
 validation <- read_csv("Validation_1.csv")
 df <- read_csv("Dataset_257_vphl1.csv")
+
+# Data for interchanges with RTOR from exclusive RT lane
 df1 <- filter(df, Type == "Interchange", `Lane configuration` == "Exclusive")
 df1 <- filter(df1, !(Location %in% validation$Location))
-sites <- df1 %>% group_by(Location) %>% summarise(n= n())
 
 df1[c(8:22, 24:25)] <- lapply(df1[c(8:22, 24:25)], function (x) {x*12})
 df1$`Red duration` <- df1$`Red duration`/300
@@ -378,8 +342,6 @@ df1$`Total pedestrian volume (Parallel)` <- df1$`Parallel ped volume during red`
 df1$`Total pedestrian volume (Conflicting)` <-  df1$`Conflicting ped volume during red` + 
   df1$`Conflicting ped volume during green`
 
-
-names(df1)
 c <- df1[c(3, 8, 6, 9:23, 87:91, 36,37,40,41,78,79,81,83:86,4)]
 #c <- filter(c, is.na(`Red duration`) == FALSE)
 c$`Subject Approach speed limit` <- as.numeric(c$`Subject Approach speed limit`)
@@ -395,6 +357,7 @@ d <- c[c(18, 3:9, 17, 19:34)] # For logistic only
 names(d) <- make.names(names(d), unique=TRUE)
 dfe_logistic <- d
 
+# Model form 1
 mznb_interchange1 <- zeroinfl(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Conflicting.thru.volume.during.red  +
                                 Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
                                 Presence.of.parallel.pedestrian.crosswalk   +
@@ -402,7 +365,7 @@ mznb_interchange1 <- zeroinfl(formula = Right.turn.on.red.volume ~ 1 + Red.durat
 
 summary(mznb_interchange1)
 
-
+# Model form 2
 mnb_interchange2 <- glm.nb(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Total.conflicting.thru.volume + 
                              Total.opposing.left.turn.volume +
                              Total.shadowed.left.turn.volume+ Total.right.turn.volume +
@@ -411,16 +374,15 @@ mnb_interchange2 <- glm.nb(formula = Right.turn.on.red.volume ~ 1 + Red.duration
 
 summary(mnb_interchange2)
 
-
+# Model form 3
 dfe_logistic$Right.turn.on.red.percent <- dfe_logistic$Right.turn.on.red.percent/100
 ml_interchange3 <- glm(Right.turn.on.red.percent ~ 1 + Red.duration, family = binomial, weights = Total.right.turn.volume,
-                       data = dfe_logistic)
+                        data = dfe_logistic)
 
 summary(ml_interchange3)
 
 
-################### both ##############################
-
+# Analysis using data for both intersections and interchanges
 validation <- read_csv("Validation_1.csv")
 df <- read_csv("Dataset_257_vphl1.csv")
 df1 <- filter(df, `Lane configuration` == "Exclusive")
@@ -439,7 +401,6 @@ df1$`Total pedestrian volume (Parallel)` <- df1$`Parallel ped volume during red`
   df1$`Parallel ped volume during green`
 df1$`Total pedestrian volume (Conflicting)` <-  df1$`Conflicting ped volume during red` + 
   df1$`Conflicting ped volume during green`
-
 
 names(df1)
 c <- df1[c(3, 8, 6, 9:23, 87:91, 36,37,40,41,78,79,81,83:86,4, 80)]
@@ -461,64 +422,45 @@ d$Type <- as.factor(d$Type)
 d$Type <- relevel(d$Type, ref = "Intersection")
 dfe_logistic <- d
 
+# Model form 1
+# without categorical variable
 mznb <- zeroinfl(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Conflicting.thru.volume.during.red  +
+                                Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
+                                Presence.of.parallel.pedestrian.crosswalk   +
+                                Receiving.lane + Shadowed.left| Red.duration + Total.right.turn.volume, data = dfe_both, dist = "negbin")
+# with categorical variable
+mznb_type <- zeroinfl(formula = Right.turn.on.red.volume ~ 1 + Type + Red.duration + Conflicting.thru.volume.during.red  +
                    Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
                    Presence.of.parallel.pedestrian.crosswalk   +
                    Receiving.lane + Shadowed.left| Red.duration + Total.right.turn.volume, data = dfe_both, dist = "negbin")
 
-mznb_type <- zeroinfl(formula = Right.turn.on.red.volume ~ 1 + Type + Red.duration + Conflicting.thru.volume.during.red  +
-                        Shadowed.left.volume.during.red+ Total.right.turn.volume + Conflicting.ped.volume.during.red +
-                        Presence.of.parallel.pedestrian.crosswalk   +
-                        Receiving.lane + Shadowed.left| Red.duration + Total.right.turn.volume, data = dfe_both, dist = "negbin")
-
 summary(mznb)
 
-
+# Model form 2
+# without categorical variable
 mnb <- glm.nb(formula = Right.turn.on.red.volume ~ 1 + Red.duration + Total.conflicting.thru.volume + 
-                Total.opposing.left.turn.volume +
-                Total.shadowed.left.turn.volume+ Total.right.turn.volume +
-                
+                             Total.opposing.left.turn.volume +
+                             Total.shadowed.left.turn.volume+ Total.right.turn.volume +
                 Total.pedestrian.volume..Conflicting., data = dfe_both)
 
+# with categorical variable
 mnb_type <- glm.nb(formula = Right.turn.on.red.volume ~ 1 + Type+ Red.duration + Total.conflicting.thru.volume + 
-                     Total.opposing.left.turn.volume +
-                     Total.shadowed.left.turn.volume+ Total.right.turn.volume +
-                     Total.pedestrian.volume..Conflicting., data = dfe_both)
+                Total.opposing.left.turn.volume +
+                Total.shadowed.left.turn.volume+ Total.right.turn.volume +
+                Total.pedestrian.volume..Conflicting., data = dfe_both)
 
 summary(mnb)
 
-
+# Model form 3
 dfe_logistic$Right.turn.on.red.percent <- dfe_logistic$Right.turn.on.red.percent/100
+
+# without categorical variable
 ml <- glm(Right.turn.on.red.percent ~ 1 + Red.duration, family = binomial, weights = Total.right.turn.volume,
+                       data = dfe_logistic)
+
+# with categorical variable
+ml_type <- glm(Right.turn.on.red.percent ~ 1 + Type + Red.duration, family = binomial, weights = Total.right.turn.volume,
           data = dfe_logistic)
 
-ml_type <- glm(Right.turn.on.red.percent ~ 1 + Type + Red.duration, family = binomial, weights = Total.right.turn.volume,
-               data = dfe_logistic)
-
 summary(ml)
-
-
-
-stargazer(mnb_e2, mnb_interchange2, mnb, mnb_type,
-          single.row = TRUE, 
-          type ="html", 
-          report = "vc*", 
-          header = FALSE, 
-          df=FALSE, 
-          digits=2, 
-          se = NULL,
-          intercept.bottom = FALSE,
-          out="models.htm"
-)
-
-
-
-#########################################
-
-mnb_e4 <- glm.nb(formula = Right.turn.on.red.volume ~ 1 + I(Red.duration^2) + Total.conflicting.thru.volume + 
-                   Total.opposing.left.turn.volume +
-                   Total.shadowed.left.turn.volume+ Total.right.turn.volume + Total.pedestrian.volume..Conflicting., data = dfe)
-
-summary(mnb_e4)
-
 
