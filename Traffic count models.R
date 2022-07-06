@@ -463,4 +463,3 @@ ml_type <- glm(Right.turn.on.red.percent ~ 1 + Type + Red.duration, family = bin
           data = dfe_logistic)
 
 summary(ml)
-
