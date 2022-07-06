@@ -1,4 +1,4 @@
-# Traffic-Count-Models
+# Regression-modeling-of-right-turn-on-red-volume
 Regression models for predicting right-turn-on-red volume at signalized intersections. Data from 260 intersections across the United States were used.
 
 Models considered:
